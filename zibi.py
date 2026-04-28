@@ -43,29 +43,42 @@ class ZibiBrain:
 
 zibi = ZibiBrain()
 
-def cauta_surse_sigure(query):
-    """Căutare pe internet folosind DuckDuckGo."""
+def cauta_pe_internet(query, este_stapan):
+    """Funcție de căutare stabilă pe surse sigure."""
     try:
-        search_query = f"{query} wikipedia"
+        search_query = query.lower()
+        pentru_stergere = ["caută pe internet", "cauta pe internet", "caută", "cauta"]
+        for cuvant in pentru_stergere:
+            search_query = search_query.replace(cuvant, "")
+        
+        search_query = search_query.strip()
+        if not search_query: 
+            return "Ce anume vrei să caut?" if este_stapan else None
+
         with DDGS() as ddgs:
-            results = list(ddgs.text(search_query, region='wt-wt', max_results=3))
+            results = list(ddgs.text(f"{search_query} wikipedia", region='wt-wt', max_results=3))
             if results:
-                raspuns = f"🔎 *Informații găsite pentru:* '{query}'\n\n"
+                raspuns = f"🌐 *Informații găsite:* \n\n"
                 for r in results:
-                    raspuns += f"✅ *{r['title']}*\n📝 {r['body'][:200]}...\n🔗 [Sursă]({r['href']})\n\n"
+                    raspuns += f"✅ *{r['title']}*\n{r['body'][:200]}...\n🔗 [Sursă]({r['href']})\n\n"
                 return raspuns
-    except: pass
-    return "🤔 Nu am găsit detalii sigure pe internet pentru acest subiect."
+    except Exception as e:
+        print(f"Eroare search: {e}")
+    
+    # Mesajul de eroare apare DOAR pentru stăpân
+    if este_stapan:
+        return "🤔 Nu am găsit nimic clar pe internet. Poți să mă înveți folosind /invata"
+    return None
 
 @bot.message_handler(content_types=['text', 'photo', 'document'])
 def handle_messages(message):
     uid = message.from_user.id
+    este_stapan = (uid == ID_STAPAN)
     text_raw = message.text or message.caption or ""
     text_mic = text_raw.lower().strip()
 
-    # --- INVATARE: CU SLASH (obligatoriu) ---
-    # Exemplu: /invata cine e seful : Brut Studio
-    if uid == ID_STAPAN and text_mic.startswith("/invata"):
+    # --- 1. INVATARE: CU SLASH (doar stăpân) ---
+    if este_stapan and text_mic.startswith("/invata"):
         try:
             partea = text_raw[len("/invata"):].strip()
             if ":" in partea:
@@ -74,23 +87,21 @@ def handle_messages(message):
                 if q_low not in zibi.memorie: zibi.memorie[q_low] = []
                 zibi.memorie[q_low].append(r)
                 zibi.salveaza_memorie()
-                bot.reply_to(message, f"✅ Am memorat: {q}")
-                return
+                bot.reply_to(message, f"✅ Memorat: {q}")
             else:
-                bot.reply_to(message, "⚠️ Folosește formatul: /invata întrebare : răspuns")
-                return
+                bot.reply_to(message, "⚠️ Format: /invata întrebare : răspuns")
         except: pass
+        return
 
-    # --- CAUTARE: FĂRĂ SLASH ---
-    # Exemplu: cauta vremea in bucuresti
-    if text_mic.startswith("cauta"):
-        subiect = text_raw[len("cauta"):].strip()
-        if subiect:
-            bot.send_chat_action(message.chat.id, 'typing')
-            bot.reply_to(message, cauta_surse_sigure(subiect), parse_mode="Markdown")
-            return
+    # --- 2. CAUTARE EXPLICITĂ: FĂRĂ SLASH ---
+    if text_mic.startswith("caută") or text_mic.startswith("cauta"):
+        bot.send_chat_action(message.chat.id, 'typing')
+        rezultat = cauta_pe_internet(text_raw, este_stapan)
+        if rezultat:
+            bot.reply_to(message, rezultat, parse_mode="Markdown")
+        return
 
-    # --- PROCESARE IMAGINI ---
+    # --- 3. PROCESARE IMAGINI ---
     if message.content_type == 'photo':
         bot.send_message(message.chat.id, "🖼️ Elimin fundalul...")
         file_info = bot.get_file(message.photo[-1].file_id)
@@ -101,150 +112,19 @@ def handle_messages(message):
         except: pass
         return
 
-    # --- RĂSPUNS MEMORIE SAU AUTO-SEARCH ---
+    # --- 4. RĂSPUNS DIN MEMORIE SAU AUTO-SEARCH ---
     if text_mic in zibi.memorie:
         bot.reply_to(message, random.choice(zibi.memorie[text_mic]))
     else:
-        # Dacă nu știe, caută automat
+        # Căutare automată silențioasă
         bot.send_chat_action(message.chat.id, 'typing')
-        bot.reply_to(message, cauta_surse_sigure(text_raw), parse_mode="Markdown")
+        rezultat_auto = cauta_pe_internet(text_raw, este_stapan)
+        if rezultat_auto:
+            bot.reply_to(message, rezultat_auto, parse_mode="Markdown")
 
 if __name__ == "__main__":
-    print("🚀 Zibi Pro este online (/invata + cauta fara slash)")
-    bot.polling(none_stop=True)                with open(FISIER_MEMORIE, "r", encoding="utf-8") as f:
-                    date_incarcate = json.load(f)
-                    if "date_memorie" in date_incarcate:
-                        # Combinam memoria default cu cea salvata
-                        for q, r_list in date_incarcate["date_memorie"].items():
-                            q_clean = q.strip().lower()
-                            if q_clean not in self.memorie:
-                                self.memorie[q_clean] = r_list
-                            else:
-                                # Adaugam raspunsuri noi la intrebari existente fara duplicate
-                                self.memorie[q_clean] = list(set(self.memorie[q_clean] + r_list))
-                print("✅ Memoria a fost incarcata cu succes din fisier!")
-            except Exception as e:
-                print(f"⚠️ Eroare la incarcarea memoriei: {e}")
-
-    def salveaza_memorie(self):
-        """Salveaza tot ce a invatat Zibi inapoi in fisier."""
-        try:
-            with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
-                json.dump({"date_memorie": self.memorie}, f, ensure_ascii=False, indent=4)
-            
-            # PUSH AUTOMAT PE GITHUB (Daca ruleaza in Github Actions)
-            if os.getenv("GITHUB_ACTIONS"):
-                subprocess.run(["git", "config", "user.name", "Zibi-AutoSave"])
-                subprocess.run(["git", "add", FISIER_MEMORIE])
-                subprocess.run(["git", "commit", "-m", "Zibi si-a salvat amintirile noi! 🧠"])
-                subprocess.run(["git", "push"])
-        except Exception as e:
-            print(f"⚠️ Eroare la salvarea memoriei: {e}")
-
-zibi = ZibiBrain()
-
-# --- FUNCTII DE PROCESARE (FARA API EXTERN) ---
-
-def cauta_pe_internet(query):
-    """Cauta informatii pe web folosind DuckDuckGo Search."""
-    try:
-        with DDGS() as ddgs:
-            results = ddgs.text(query, region='wt-wt', max_results=3)
-            if results:
-                raspuns = "🌐 Am cautat pe internet si iata ce am gasit:\n\n"
-                for r in results:
-                    raspuns += f"🔹 *{r['title']}*\n{r['href']}\n\n"
-                return raspuns
-    except Exception as e:
-        print(f"Eroare cautare: {e}")
-    return "🤔 Nu am gasit nimic in memorie si cautarea web a intampinat o problema."
-
-def scoate_fundal(data_bytes):
-    """Elimina fundalul unei imagini folosind biblioteca rembg."""
-    try:
-        input_image = Image.open(io.BytesIO(data_bytes))
-        output_image = remove(input_image)
-        img_io = io.BytesIO()
-        output_image.save(img_io, format='PNG')
-        img_io.seek(0)
-        return img_io
-    except Exception as e:
-        print(f"Eroare rembg: {e}")
-        return None
-
-def citeste_pdf(data_bytes):
-    """Extrage primele caractere dintr-un document PDF."""
-    try:
-        doc = fitz.open(stream=data_bytes, filetype="pdf")
-        text = ""
-        for pagina in doc:
-            text += pagina.get_text()
-        return text[:1500] if text.strip() else "Documentul PDF nu contine text citibil."
-    except Exception as e:
-        return f"Eroare la citirea PDF: {e}"
-
-# --- LOGICA MESAJE TELEGRAM ---
-
-@bot.message_handler(content_types=['text', 'photo', 'document'])
-def handle_messages(message):
-    uid = message.from_user.id
-    text_raw = message.text or message.caption or ""
-    text_mic = text_raw.lower().strip()
-
-    # 1. Gestionare PDF-uri
-    if message.content_type == 'document' and message.document.mime_type == 'application/pdf':
-        bot.send_chat_action(message.chat.id, 'typing')
-        file_info = bot.get_file(message.document.file_id)
-        data = bot.download_file(file_info.file_path)
-        rezultat = citeste_pdf(data)
-        bot.reply_to(message, f"📄 *Continut PDF:*\n\n{rezultat}", parse_mode="Markdown")
-        return
-
-    # 2. Gestionare Poze (Eliminare fundal)
-    if message.content_type == 'photo':
-        bot.send_message(message.chat.id, "🖼️ Elimin fundalul pozei, te rog asteapta...")
-        file_info = bot.get_file(message.photo[-1].file_id)
-        data = bot.download_file(file_info.file_path)
-        img_fara_bg = scoate_fundal(data)
-        if img_fara_bg:
-            bot.send_document(message.chat.id, img_fara_bg, visible_file_name="zibi_fara_fundal.png")
-        else:
-            bot.reply_to(message, "❌ Nu am putut elimina fundalul.")
-        return
-
-    # 3. Functia de INVATARE (Doar pentru Stapan)
-    if uid == ID_STAPAN and text_mic.startswith("/invata"):
-        try:
-            # Format dorit: /invata intrebare : raspuns
-            partea = text_raw.split("/invata", 1)[-1]
-            if ":" in partea:
-                intrebare, raspuns = [x.strip() for x in partea.split(":", 1)]
-                intrebare_mic = intrebare.lower()
-                
-                if intrebare_mic not in zibi.memorie:
-                    zibi.memorie[intrebare_mic] = []
-                
-                if raspuns not in zibi.memorie[intrebare_mic]:
-                    zibi.memorie[intrebare_mic].append(raspuns)
-                    zibi.salveaza_memorie()
-                    bot.reply_to(message, f"✅ Brut Studio, am invatat:\n❓ {intrebare}\n💡 {raspuns}")
-                else:
-                    bot.reply_to(message, "Asta stiu deja! 😉")
-            else:
-                bot.reply_to(message, "Te rog foloseste formatul -> /invata intrebare : raspuns")
-        except Exception as e:
-            bot.reply_to(message, f"Eroare la invatare: {e}")
-        return
-
-    # 4. Comanda Reset (Doar Stapan)
-    if uid == ID_STAPAN and text_mic == "/reset_total":
-        zibi.memorie = zibi.default_mem.copy()
-        zibi.salveaza_memorie()
-        bot.reply_to(message, "💥 Memoria a fost resetata la valorile din fabrica!")
-        return
-
-    # 5. Cautare in memorie sau pe Web
-    if text_mic in zibi.memorie:
+    print("🚀 Zibi Privacy Fix este online!")
+    bot.polling(none_stop=True)e:
         # Alegem un raspuns la intamplare din lista
         ales = random.choice(zibi.memorie[text_mic])
         bot.reply_to(message, ales)
