@@ -1,6 +1,8 @@
 python-telegram-bot
+pyTelegramBotAPI
 Pillow
 rembg
 requests
 onnxruntime
-pyTelegramBotAPI
+pymupdf
+beautifulsoup4
