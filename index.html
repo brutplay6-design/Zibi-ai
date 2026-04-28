@@ -1,0 +1,35 @@
+<div id="chat-demo" style="background: #1a1a2e; border: 1px solid #00d2ff; border-radius: 15px; margin-top: 40px; padding: 20px; text-align: left;">
+    <h4 style="color: #00d2ff; margin-top: 0;">Zibi Online Demo</h4>
+    <div id="messages" style="height: 150px; overflow-y: auto; margin-bottom: 10px; font-size: 0.9rem;">
+        <p><strong>Zibi:</strong> Salut! Eu sunt Zibi. Scrie-mi ceva!</p>
+    </div>
+    <div style="display: flex; gap: 10px;">
+        <input type="text" id="userInput" placeholder="Scrie aici..." style="flex: 1; padding: 8px; border-radius: 5px; border: none;">
+        <button onclick="sendMessage()" style="background: #00d2ff; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer;">Trimite</button>
+    </div>
+</div>
+
+<script>
+function sendMessage() {
+    const input = document.getElementById('userInput');
+    const messages = document.getElementById('messages');
+    if(input.value.trim() === "") return;
+
+    // Mesajul tău
+    messages.innerHTML += `<p><strong>Tu:</strong> ${input.value}</p>`;
+    
+    // Răspuns Zibi (Simulat pentru demo pe site)
+    setTimeout(() => {
+        const raspunsuri = [
+            "De ce nu merg elefanții la plajă? Că le pică chiloții! 🐘",
+            "Sunt online și gata de treabă! 🚀",
+            "Vrei să mă înveți ceva nou? Hai pe Telegram! 🤖"
+        ];
+        const ales = raspunsuri[Math.floor(Math.random() * raspunsuri.length)];
+        messages.innerHTML += `<p style="color: #00d2ff;"><strong>Zibi:</strong> ${ales}</p>`;
+        messages.scrollTop = messages.scrollHeight;
+    }, 1000);
+
+    input.value = "";
+}
+</script>
