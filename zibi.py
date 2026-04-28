@@ -4,8 +4,6 @@ import os
 import random
 import io
 import requests
-from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
 from rembg import remove
 from PIL import Image
 
@@ -13,7 +11,6 @@ from PIL import Image
 TOKEN = "8276199135:AAGTcsdHJdncH_UZsv5PzSHFDGCzkOGibt8"
 ID_STAPAN = 7040347167 
 FISIER_MEMORIE = "zibi_memorie.json"
-apiKey = "" # Rezervat pentru procesare AI daca este disponibila
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 
@@ -35,6 +32,109 @@ class ZibiBrain:
                         self.memorie.update(date["date_memorie"])
             except: pass
 
+    def salveaza(self):
+        try:
+            with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
+                json.dump({"date_memorie": self.memorie}, f, ensure_ascii=False, indent=4)
+        except: pass
+
+zibi = ZibiBrain()
+
+def cauta_wikipedia_direct(query):
+    """Foloseste API-ul oficial Wikipedia pentru a lua text direct."""
+    try:
+        # Curatam query-ul
+        query = query.lower().replace("cauta", "").replace("caută", "").strip()
+        
+        # Seteaza limba romana
+        S = requests.Session()
+        URL = "https://ro.wikipedia.org/w/api.php"
+
+        # Pasul 1: Cautam titlul paginii
+        PARAMS_SEARCH = {
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "format": "json"
+        }
+        res_search = S.get(url=URL, params=PARAMS_SEARCH, timeout=5).json()
+        
+        if not res_search['query']['search']:
+            return None
+
+        titlu = res_search['query']['search'][0]['title']
+
+        # Pasul 2: Luam extrasul (textul) paginii respective
+        PARAMS_TEXT = {
+            "action": "query",
+            "prop": "extracts",
+            "exintro": True,
+            "explaintext": True,
+            "titles": titlu,
+            "format": "json"
+        }
+        res_text = S.get(url=URL, params=PARAMS_TEXT, timeout=5).json()
+        pages = res_text['query']['pages']
+        
+        for p in pages:
+            extras = pages[p]['extract']
+            if extras:
+                # Scurtam daca e prea lung
+                if len(extras) > 800:
+                    extras = extras[:800] + "..."
+                return f"📖 *Informație Wikipedia: {titlu}*\n\n{extras}"
+                
+    except Exception as e:
+        print(f"Eroare API Wiki: {e}")
+    return None
+
+@bot.message_handler(content_types=['text', 'photo'])
+def handle_messages(message):
+    uid = message.from_user.id
+    este_stapan = (uid == ID_STAPAN)
+    text_raw = message.text or message.caption or ""
+    text_mic = text_raw.lower().strip()
+
+    # 1. INVATARE (Doar Stăpân, cu /)
+    if este_stapan and text_mic.startswith("/invata"):
+        partea = text_raw[len("/invata"):].strip()
+        if ":" in partea:
+            q, r = [x.strip() for x in partea.split(":", 1)]
+            zibi.memorie[q.lower()] = [r]
+            zibi.salveaza()
+            bot.reply_to(message, "✅ Memorat!")
+        return
+
+    # 2. IMAGINI (Rembg)
+    if message.content_type == 'photo':
+        bot.send_message(message.chat.id, "🖼️ Elimin fundalul...")
+        file_info = bot.get_file(message.photo[-1].file_id)
+        data = bot.download_file(file_info.file_path)
+        try:
+            output = remove(data)
+            bot.send_document(message.chat.id, io.BytesIO(output), visible_file_name="zibi_no_bg.png")
+        except: pass
+        return
+
+    # 3. LOGICA RASPUNS
+    # A. Verifica in JSON
+    if text_mic in zibi.memorie:
+        bot.reply_to(message, random.choice(zibi.memorie[text_mic]))
+        return
+
+    # B. Daca nu e in memorie, cauta AUTOMAT pe Wikipedia (Direct API)
+    bot.send_chat_action(message.chat.id, 'typing')
+    raspuns_wiki = cauta_wikipedia_direct(text_raw)
+    
+    if raspuns_wiki:
+        bot.reply_to(message, raspuns_wiki, parse_mode="Markdown")
+    else:
+        # Mesajul de eroare apare DOAR pentru tine
+        if este_stapan:
+            bot.reply_to(message, "❌ Nu am găsit nimic pe Wikipedia. Învață-mă: `/invata întrebare : răspuns`", parse_mode="Markdown")
+
+if __name__ == "__main__":
+    bot.polling(none_stop=True)
     def salveaza(self):
         try:
             with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
