@@ -2,17 +2,16 @@ import telebot
 import json
 import os
 import random
-import subprocess
-import requests
-from bs4 import BeautifulSoup
-from collections import deque
-from difflib import get_close_matches
-import fitz  # PyMuPDF pentru PDF
-from PIL import Image
 import io
+import subprocess
+from rembg import remove
+from PIL import Image
+import fitz  # PyMuPDF
+from duckduckgo_search import DDGS
+from collections import deque
 
-# --- CONFIGURARE ---
-# Token-ul tau de la BotFather
+# --- CONFIGURARE DATE ACCES ---
+# Inlocuieste cu token-ul tau real
 TOKEN = "8276199135:AAGTcsdHJdncH_UZsv5PzSHFDGCzkOGibt8"
 ID_STAPAN = 7040347167 
 
@@ -22,19 +21,165 @@ istoric_raspunsuri = deque(maxlen=10)
 
 class ZibiBrain:
     def __init__(self):
+        # Structura de baza pe care Zibi nu o uita niciodata
         self.default_mem = {
-            "salut": ["Salut! Sunt Zibi, asistentul tau creat de Brut Studio si gazduit pe GitHub! 🌟"],
+            "salut": ["Salut! Sunt Zibi, asistentul tau creat de Brut Studio. 🌟"],
             "cine te-a creat": ["Creatorul meu este Brut Studio! 🚀"],
-            "ce faci": ["Sunt online si procesez datele local, fara creier extern! 🤖"]
+            "ce faci": ["Sunt online si gata sa te ajut cu orice! 🤖"]
         }
         self.memorie = self.default_mem.copy()
-        self.tokens = 0
-        self.incarca()
+        self.incarca_memorie()
 
-    def incarca(self):
+    def incarca_memorie(self):
+        """Incarca datele din zibi_memorie.json fara sa le stearga pe cele existente."""
         if os.path.exists(FISIER_MEMORIE):
             try:
                 with open(FISIER_MEMORIE, "r", encoding="utf-8") as f:
+                    date_incarcate = json.load(f)
+                    if "date_memorie" in date_incarcate:
+                        # Combinam memoria default cu cea salvata
+                        for q, r_list in date_incarcate["date_memorie"].items():
+                            q_clean = q.strip().lower()
+                            if q_clean not in self.memorie:
+                                self.memorie[q_clean] = r_list
+                            else:
+                                # Adaugam raspunsuri noi la intrebari existente fara duplicate
+                                self.memorie[q_clean] = list(set(self.memorie[q_clean] + r_list))
+                print("✅ Memoria a fost incarcata cu succes din fisier!")
+            except Exception as e:
+                print(f"⚠️ Eroare la incarcarea memoriei: {e}")
+
+    def salveaza_memorie(self):
+        """Salveaza tot ce a invatat Zibi inapoi in fisier."""
+        try:
+            with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
+                json.dump({"date_memorie": self.memorie}, f, ensure_ascii=False, indent=4)
+            
+            # PUSH AUTOMAT PE GITHUB (Daca ruleaza in Github Actions)
+            if os.getenv("GITHUB_ACTIONS"):
+                subprocess.run(["git", "config", "user.name", "Zibi-AutoSave"])
+                subprocess.run(["git", "add", FISIER_MEMORIE])
+                subprocess.run(["git", "commit", "-m", "Zibi si-a salvat amintirile noi! 🧠"])
+                subprocess.run(["git", "push"])
+        except Exception as e:
+            print(f"⚠️ Eroare la salvarea memoriei: {e}")
+
+zibi = ZibiBrain()
+
+# --- FUNCTII DE PROCESARE (FARA API EXTERN) ---
+
+def cauta_pe_internet(query):
+    """Cauta informatii pe web folosind DuckDuckGo Search."""
+    try:
+        with DDGS() as ddgs:
+            results = ddgs.text(query, region='wt-wt', max_results=3)
+            if results:
+                raspuns = "🌐 Am cautat pe internet si iata ce am gasit:\n\n"
+                for r in results:
+                    raspuns += f"🔹 *{r['title']}*\n{r['href']}\n\n"
+                return raspuns
+    except Exception as e:
+        print(f"Eroare cautare: {e}")
+    return "🤔 Nu am gasit nimic in memorie si cautarea web a intampinat o problema."
+
+def scoate_fundal(data_bytes):
+    """Elimina fundalul unei imagini folosind biblioteca rembg."""
+    try:
+        input_image = Image.open(io.BytesIO(data_bytes))
+        output_image = remove(input_image)
+        img_io = io.BytesIO()
+        output_image.save(img_io, format='PNG')
+        img_io.seek(0)
+        return img_io
+    except Exception as e:
+        print(f"Eroare rembg: {e}")
+        return None
+
+def citeste_pdf(data_bytes):
+    """Extrage primele caractere dintr-un document PDF."""
+    try:
+        doc = fitz.open(stream=data_bytes, filetype="pdf")
+        text = ""
+        for pagina in doc:
+            text += pagina.get_text()
+        return text[:1500] if text.strip() else "Documentul PDF nu contine text citibil."
+    except Exception as e:
+        return f"Eroare la citirea PDF: {e}"
+
+# --- LOGICA MESAJE TELEGRAM ---
+
+@bot.message_handler(content_types=['text', 'photo', 'document'])
+def handle_messages(message):
+    uid = message.from_user.id
+    text_raw = message.text or message.caption or ""
+    text_mic = text_raw.lower().strip()
+
+    # 1. Gestionare PDF-uri
+    if message.content_type == 'document' and message.document.mime_type == 'application/pdf':
+        bot.send_chat_action(message.chat.id, 'typing')
+        file_info = bot.get_file(message.document.file_id)
+        data = bot.download_file(file_info.file_path)
+        rezultat = citeste_pdf(data)
+        bot.reply_to(message, f"📄 *Continut PDF:*\n\n{rezultat}", parse_mode="Markdown")
+        return
+
+    # 2. Gestionare Poze (Eliminare fundal)
+    if message.content_type == 'photo':
+        bot.send_message(message.chat.id, "🖼️ Elimin fundalul pozei, te rog asteapta...")
+        file_info = bot.get_file(message.photo[-1].file_id)
+        data = bot.download_file(file_info.file_path)
+        img_fara_bg = scoate_fundal(data)
+        if img_fara_bg:
+            bot.send_document(message.chat.id, img_fara_bg, visible_file_name="zibi_fara_fundal.png")
+        else:
+            bot.reply_to(message, "❌ Nu am putut elimina fundalul.")
+        return
+
+    # 3. Functia de INVATARE (Doar pentru Stapan)
+    if uid == ID_STAPAN and text_mic.startswith("/invata"):
+        try:
+            # Format dorit: /invata intrebare : raspuns
+            partea = text_raw.split("/invata", 1)[-1]
+            if ":" in partea:
+                intrebare, raspuns = [x.strip() for x in partea.split(":", 1)]
+                intrebare_mic = intrebare.lower()
+                
+                if intrebare_mic not in zibi.memorie:
+                    zibi.memorie[intrebare_mic] = []
+                
+                if raspuns not in zibi.memorie[intrebare_mic]:
+                    zibi.memorie[intrebare_mic].append(raspuns)
+                    zibi.salveaza_memorie()
+                    bot.reply_to(message, f"✅ Brut Studio, am invatat:\n❓ {intrebare}\n💡 {raspuns}")
+                else:
+                    bot.reply_to(message, "Asta stiu deja! 😉")
+            else:
+                bot.reply_to(message, "Te rog foloseste formatul -> /invata intrebare : raspuns")
+        except Exception as e:
+            bot.reply_to(message, f"Eroare la invatare: {e}")
+        return
+
+    # 4. Comanda Reset (Doar Stapan)
+    if uid == ID_STAPAN and text_mic == "/reset_total":
+        zibi.memorie = zibi.default_mem.copy()
+        zibi.salveaza_memorie()
+        bot.reply_to(message, "💥 Memoria a fost resetata la valorile din fabrica!")
+        return
+
+    # 5. Cautare in memorie sau pe Web
+    if text_mic in zibi.memorie:
+        # Alegem un raspuns la intamplare din lista
+        ales = random.choice(zibi.memorie[text_mic])
+        bot.reply_to(message, ales)
+    else:
+        # Daca nu stie, cauta pe DuckDuckGo
+        bot.send_chat_action(message.chat.id, 'typing')
+        rezultat_web = cauta_pe_internet(text_raw)
+        bot.reply_to(message, rezultat_web, parse_mode="Markdown")
+
+if __name__ == "__main__":
+    print("🚀 Zibi Pro Telegram este ONLINE!")
+    bot.polling(none_stop=True)                with open(FISIER_MEMORIE, "r", encoding="utf-8") as f:
                     date = json.load(f)
                     if "date_memorie" in date:
                         self.memorie.update(date["date_memorie"])
