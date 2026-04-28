@@ -2,7 +2,6 @@ import telebot
 import json
 import os
 import random
-import threading
 import subprocess
 from collections import deque
 from difflib import get_close_matches
@@ -31,7 +30,7 @@ class ZibiBrain:
                 with open(FISIER_MEMORIE, "r", encoding="utf-8") as f:
                     date = json.load(f)
                     if "date_memorie" in date:
-                        # Curățăm cheile la încărcare
+                        # Curățăm spațiile invizibile
                         self.memorie = {k.strip().lower(): v for k, v in date["date_memorie"].items()}
                     self.tokens = date.get("tokens", 0)
             except: pass
@@ -41,27 +40,26 @@ class ZibiBrain:
             with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
                 json.dump({"date_memorie": self.memorie, "tokens": self.tokens}, f, ensure_ascii=False, indent=4)
             
-            # --- SALVARE PE GITHUB ---
+            # --- PUSH PE GITHUB ---
             if os.getenv("GITHUB_ACTIONS"):
                 subprocess.run(["git", "config", "user.name", "Zibi-AutoSave"])
                 subprocess.run(["git", "config", "user.email", "bot@zibi.com"])
                 subprocess.run(["git", "add", FISIER_MEMORIE])
-                subprocess.run(["git", "commit", "-m", "Zibi a invatat ceva nou! 🧠"])
-                # Forțăm push-ul ca să fim siguri că ajunge pe GitHub
-                subprocess.run(["git", "push", "origin", "main"]) 
-        except Exception as e:
-            print(f"Eroare salvare: {e}")
+                subprocess.run(["git", "commit", "-m", "Zibi a invatat lucruri noi! 🧠"])
+                subprocess.run(["git", "push", "origin", "main"])
+        except: pass
 
 zibi = ZibiBrain()
 
+# --- FUNCȚII LOGICĂ ---
 def genereaza_epoca():
     toate = []
     for l in zibi.memorie.values(): toate.extend(l)
-    if not toate: return "Memorie goală..."
+    if not toate: return "Memoria e goală..."
     cuvinte = " ".join(toate).split()
-    if len(cuvinte) < 4: return random.choice(toate)
-    selectie = random.sample(cuvinte, min(8, len(cuvinte)))
-    return "🌀 [Epocă]: " + " ".join(selectie).capitalize() + "..."
+    if len(cuvinte) < 5: return random.choice(toate)
+    res = " ".join(random.sample(cuvinte, min(7, len(cuvinte))))
+    return f"🌀 [Epocă]: {res.capitalize()}..."
 
 def alege_unic(lista):
     disp = [o for o in lista if o not in istoric_raspunsuri]
@@ -79,7 +77,7 @@ def proceseaza_mesaj(text_raw, uid):
             zibi.memorie = zibi.default_mem.copy()
             zibi.tokens = 0
             zibi.salveaza()
-            return "💥 RESET COMPLET!"
+            return "💥 MEMORIE RESETATĂ!"
 
         if text_mic.startswith("/sterge"):
             c = text_mic.replace("/sterge", "").strip()
@@ -88,38 +86,44 @@ def proceseaza_mesaj(text_raw, uid):
                 zibi.salveaza()
                 return f"🗑️ Sters: {c}"
 
-        # --- INVATARE IMBUNATATITA ---
-        if text_mic.startswith("/invata"):
+        # --- INVATARE REPARATĂ (Ignoră cuvintele extra ca 'adult') ---
+        if "/invata" in text_mic:
             linii = text_raw.split('\n')
             ok = 0
             for linie in linii:
-                # Scoatem "/invata" indiferent cum e scris
-                parti = linie.lower().replace("/invata", "").strip()
-                if ":" in parti:
+                if ":" in linie:
                     try:
-                        q, r = [x.strip() for x in parti.split(":", 1)]
-                        # Pastram literele mari in raspuns, dar intrebarea o facem mica
+                        # Taiem tot ce e inainte de prima intrebare, ignorand 'adult' etc.
+                        partea_de_dupa_invata = linie.split("/invata", 1)[1]
+                        # Gasim unde e ":"
+                        q_raw, r_raw = partea_de_dupa_invata.split(":", 1)
+                        
+                        # Curatam intrebarea (scoatem 'adult' daca a ramas in fata intrebarii)
+                        q = q_raw.strip().lower()
+                        if " " in q: # Daca a scris "/invata adult salut" -> q devine "adult salut"
+                             q = q.split()[-1] # Luam doar ultimul cuvant: "salut"
+                        
+                        r = r_raw.strip()
+                        
                         if q not in zibi.memorie: zibi.memorie[q] = []
-                        # Folosim textul original pentru raspuns (nu cel mic)
-                        raspuns_original = linie.split(":", 1)[1].strip()
-                        if raspuns_original not in zibi.memorie[q]:
-                            zibi.memorie[q].append(raspuns_original)
+                        if r not in zibi.memorie[q]:
+                            zibi.memorie[q].append(r)
                             zibi.tokens += 10
                             ok += 1
                     except: continue
             if ok > 0:
                 zibi.salveaza()
-                return f"🚀 Gata! Am memorat {ok} lucruri noi! (Tokens: {zibi.tokens})"
+                return f"🚀 Succes! Am memorat {ok} amintiri noi! (Tokens: {zibi.tokens})"
 
-    # --- RASPUNS ---
+    # --- RĂSPUNS ---
     if text_mic in zibi.memorie:
         return alege_unic(zibi.memorie[text_mic])
 
     chei = list(zibi.memorie.keys())
-    match = get_close_matches(text_mic, chei, n=1, cutoff=0.3)
-    if match: return alege_unic(zibi.memorie[match[0]])
+    m = get_close_matches(text_mic, chei, n=1, cutoff=0.3)
+    if m: return alege_unic(zibi.memorie[m[0]])
     
-    return "🤔 Nu știu asta. Învață-mă: /invata salut : Bună ziua!"
+    return "🤔 Nu știu asta. Învață-mă: /invata salut : Bună!"
 
 @bot.message_handler(func=lambda m: True)
 def tg_msg(message):
