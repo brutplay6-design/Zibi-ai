@@ -16,10 +16,12 @@ istoric_raspunsuri = deque(maxlen=10)
 
 class ZibiBrain:
     def __init__(self):
+        # Setăm identitatea corectă direct în codul de bază
         self.default_mem = {
-            "salut": ["Salutare! 🌟", "Hei! 😎"],
-            "ce faci": ["Mă antrenez să fiu deștept! 🤖", "Stau pe GitHub și învăț. 💻"],
-            "gluma": ["De ce are rinocerul corn? Ca să nu fie hipopotam supărat! 🦏"]
+            "salut": ["Salut! Sunt asistentul Brut Studio. 🌟"],
+            "cine te-a creat": ["Creatorul meu este Brut Studio! 🚀"],
+            "creator": ["Brut Studio m-a adus la viață. 😎"],
+            "ce faci": ["Sunt online și gata de treabă! 🤖"]
         }
         self.memorie = self.default_mem.copy()
         self.tokens = 0
@@ -43,7 +45,7 @@ class ZibiBrain:
                 subprocess.run(["git", "config", "user.name", "Zibi-AutoSave"])
                 subprocess.run(["git", "config", "user.email", "bot@zibi.com"])
                 subprocess.run(["git", "add", FISIER_MEMORIE])
-                subprocess.run(["git", "commit", "-m", "Zibi a invatat sa combine mesaje! 🧠"])
+                subprocess.run(["git", "commit", "-m", "Zibi stie cine este creatorul lui! 🛠️"])
                 subprocess.run(["git", "push", "origin", "main"])
         except: pass
 
@@ -55,48 +57,36 @@ def alege_unic(lista):
     istoric_raspunsuri.append(ales)
     return ales
 
-# --- NOUA LOGICĂ DE COMBINARE A MESAJELOR ---
-def genereaza_raspuns_complex(text_user):
+def cauta_logica_avansata(text_user):
     text_mic = text_user.lower().strip()
-    raspunsuri_finale = []
     
-    # 1. Căutăm potriviri pentru propoziții întregi sau bucăți de text
-    # Verificăm dacă părți din memoria noastră se află în ce a scris userul
-    for cheie in zibi.memorie.keys():
-        if cheie in text_mic:
-            raspunsuri_finale.append(alege_unic(zibi.memorie[cheie]))
-    
-    # 2. Dacă nu am găsit nimic prin căutare directă, încercăm get_close_matches pentru propoziția întreagă
-    if not raspunsuri_finale:
-        chei = list(zibi.memorie.keys())
-        match = get_close_matches(text_mic, chei, n=1, cutoff=0.4)
-        if match:
-            raspunsuri_finale.append(alege_unic(zibi.memorie[match[0]]))
+    # 1. Căutare exactă (Cea mai rapidă)
+    if text_mic in zibi.memorie:
+        return alege_unic(zibi.memorie[text_mic])
 
-    # 3. Dacă tot nu avem nimic
-    if not raspunsuri_finale:
-        return "🤔 Interesant ce zici. Învață-mă: /invata intrebare : raspuns"
+    # 2. Scanare prin cuvinte cheie (Dacă propoziția e lungă)
+    # Verificăm dacă întrebarea învățată se regăsește în ce a scris userul
+    for intrebare_invatata in zibi.memorie.keys():
+        if intrebare_invatata in text_mic and len(intrebare_invatata) > 3:
+            return alege_unic(zibi.memorie[intrebare_invatata])
 
-    # Unim toate răspunsurile găsite într-un singur mesaj
-    return "\n".join(list(dict.fromkeys(raspunsuri_finale))) # dict.fromkeys scoate duplicatele
+    # 3. Căutare aproximativă (Dacă a scris greșit un cuvânt)
+    chei = list(zibi.memorie.keys())
+    match = get_close_matches(text_mic, chei, n=1, cutoff=0.6)
+    if match:
+        return alege_unic(zibi.memorie[match[0]])
+
+    return "🤔 Nu am asta în memorie. Învață-mă: /invata " + text_mic + " : răspuns"
 
 def proceseaza_mesaj(text_raw, uid):
     text_mic = text_raw.strip().lower()
     
-    if text_mic == "/epoca":
-        toate = []
-        for l in zibi.memorie.values(): toate.extend(l)
-        if not toate: return "Memorie goală."
-        cuvinte = " ".join(toate).split()
-        res = " ".join(random.sample(cuvinte, min(6, len(cuvinte))))
-        return f"🌀 [Epocă]: {res.capitalize()}..."
-
     if uid == ID_STAPAN:
         if text_mic == "/reset_total":
             zibi.memorie = zibi.default_mem.copy()
             zibi.tokens = 0
             zibi.salveaza()
-            return "💥 RESET TOTAL!"
+            return "💥 RESETARE! Acum Zibi știe doar de Brut Studio."
 
         if text_mic.startswith("/invata"):
             linii = text_raw.split('\n')
@@ -104,6 +94,7 @@ def proceseaza_mesaj(text_raw, uid):
             for linie in linii:
                 if ":" in linie:
                     try:
+                        # Curățăm comanda /invata și extragem datele
                         partea = linie.split("/invata", 1)[-1]
                         q, r = [x.strip() for x in partea.split(":", 1)]
                         q = q.lower()
@@ -115,9 +106,9 @@ def proceseaza_mesaj(text_raw, uid):
                     except: continue
             if ok > 0:
                 zibi.salveaza()
-                return f"🚀 Am învățat {ok} sensuri noi! (Tokens: {zibi.tokens})"
+                return f"✅ Brut Studio, am memorat {ok} răspunsuri noi!"
 
-    return genereaza_raspuns_complex(text_raw)
+    return cauta_logica_avansata(text_raw)
 
 @bot.message_handler(func=lambda m: True)
 def tg_msg(message):
