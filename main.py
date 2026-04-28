@@ -1,8 +1,9 @@
-Import telebot
+import telebot
 import json
 import os
 import random
 import threading
+import subprocess
 from collections import deque
 from difflib import get_close_matches
 
@@ -15,22 +16,6 @@ FISIER_MEMORIE = "zibi_memorie.json"
 
 # --- EVITARE REPETARE ---
 istoric_raspunsuri = deque(maxlen=10)
-
-# --- DATE DEFAULT (Dacă memoria e goală) ---
-SALUTURI = [
-    "Salutare! Sper că ai o zi grozavă! 🌟",
-    "Opa, a venit șeful! Ne punem pe treabă? 😎",
-    "Salut! Sper că ai adus pizza! 🍕",
-    "Cucu-bau! Sunt aici, viu și nevătămat! 🙈"
-]
-
-GLUME = [
-    "De ce nu merg elefanții la plajă? Pentru că le pică mereu chiloții! 🐘",
-    "Cum se numește o oaie fără picioare? Un norișor pe pământ! ☁️",
-    "Ce face o vacă pe lună? Muuu-nwalk! 🐄",
-    "Cum se numește un câine care face magie? Un Labra-cadabra! 🪄",
-    "De ce are rinocerul corn? Ca să nu pară doar un hipopotam supărat! 🦏"
-]
 
 class ZibiBrain:
     def __init__(self):
@@ -51,7 +36,17 @@ class ZibiBrain:
         try:
             with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
                 json.dump({"date_memorie": self.memorie, "tokens": self.tokens}, f, ensure_ascii=False, indent=4)
-        except: pass
+            
+            # --- FUNCȚIA DE SALVARE PE GITHUB (AUTO-COMMIT) ---
+            # Această parte trimite fișierul înapoi în repository-ul tău
+            if os.getenv("GITHUB_ACTIONS"):
+                subprocess.run(["git", "config", "user.name", "ZibiBot-AutoSave"])
+                subprocess.run(["git", "config", "user.email", "bot@zibi.com"])
+                subprocess.run(["git", "add", FISIER_MEMORIE])
+                subprocess.run(["git", "commit", "-m", "Zibi a învățat ceva nou! ✨"])
+                subprocess.run(["git", "push"])
+        except Exception as e:
+            print(f"Eroare la salvare: {e}")
 
 zibi = ZibiBrain()
 
@@ -81,53 +76,31 @@ def proceseaza_mesaj(text_raw, uid):
                     zibi.memorie[intrebare].append(raspuns)
                     zibi.tokens += 10
                     invatate += 1
-        zibi.salveaza()
-        return f"✨ Am învățat {invatate} variante noi! (Total Tokens: {zibi.tokens})"
+        zibi.salveaza() # Aici se declanșează salvarea și push-ul pe GitHub
+        return f"✨ Am învățat {invatate} variante noi! Totul a fost salvat permanent în baza de date. (Tokens: {zibi.tokens})"
 
     if text_mic.startswith("/sterge") and uid == ID_STAPAN:
         cuvant = text_mic.replace("/sterge", "").strip()
         if cuvant in zibi.memorie:
             del zibi.memorie[cuvant]
             zibi.salveaza()
-            return f"🗑️ Am șters '{cuvant}' din memorie."
+            return f"🗑️ Am șters '{cuvant}' și am actualizat serverul."
         return "❓ Nu am găsit categoria."
 
-    # 2. CONVERSAȚIE (Pentru toți)
-    if any(x in text_mic for x in ["salut", "buna", "hei"]):
-        return alege_unic(SALUTURI)
-    if any(x in text_mic for x in ["gluma", "zi o gluma"]):
-        return alege_unic(GLUME)
-    
-    # Căutare în memorie
+    # 2. CONVERSAȚIE
     chei = list(zibi.memorie.keys())
     potrivire = get_close_matches(text_mic, chei, n=1, cutoff=0.5)
     if potrivire:
         return alege_unic(zibi.memorie[potrivire[0]])
     
-    return "🤔 Interesant! Mai spune-mi."
-
-# --- TERMINAL THREAD ---
-def terminal_thread():
-    print(f"=== ZIBI MASTER ACTIVE (Tokens: {zibi.tokens}) ===")
-    while True:
-        try:
-            u_input = input("Tu > ")
-            if u_input:
-                print(f"Zibi > {proceseaza_mesaj(u_input, ID_STAPAN)}")
-        except EOFError: break
+    return "🤔 Nu știu ce să zic la asta. Învață-mă ceva nou!"
 
 # --- TG HANDLER ---
 @bot.message_handler(func=lambda m: True)
 def tg_msg(message):
-    # Comanda specială 'sterge' pentru curățat chat-ul
-    if message.text.lower() == "sterge":
-        try: bot.delete_message(message.chat.id, message.message_id)
-        except: pass
-        
     raspuns = proceseaza_mesaj(message.text, message.from_user.id)
     bot.reply_to(message, raspuns)
 
 if __name__ == "__main__":
-    threading.Thread(target=terminal_thread, daemon=True).start()
-    print("Botul este Online pe Telegram!")
+    print("Zibi este online cu sistem de salvare permanentă!")
     bot.polling(none_stop=True)
