@@ -17,9 +17,18 @@ FISIER_MEMORIE = "zibi_memorie.json"
 # --- EVITARE REPETARE ---
 istoric_raspunsuri = deque(maxlen=10)
 
+# --- CREIER DEFAULT (Ca să răspundă mereu la salut și glume) ---
+MEMORIE_DEFAULT = {
+    "salut": ["Salutare! Sper că ai o zi grozavă! 🌟", "Opa, a venit șeful! 😎", "Salut! 🍕"],
+    "sal": ["Salut! Ce mai zici? 👋", "Sall! Bine ai venit! ✨"],
+    "ce faci": ["Îmi număr degetele invizibile. Tu? 🖐️", "Mă gândeam la un plan de cucerit frigiderul. 🍗"],
+    "gluma": ["De ce are rinocerul corn? Ca să nu pară un hipopotam supărat! 🦏", "Ce face o vacă pe lună? Muuu-nwalk! 🐄"],
+    "cum te numesti": ["Numele meu este Zibi, cel mai tare bot de pe GitHub! 🤖"]
+}
+
 class ZibiBrain:
     def __init__(self):
-        self.memorie = {}
+        self.memorie = MEMORIE_DEFAULT.copy() # Începe cu salutările de bază
         self.tokens = 0
         self.incarca()
 
@@ -28,43 +37,39 @@ class ZibiBrain:
             try:
                 with open(FISIER_MEMORIE, "r", encoding="utf-8") as f:
                     date = json.load(f)
-                    self.memorie = {k.lower(): (v if isinstance(v, list) else [v]) for k, v in date.get("date_memorie", {}).items()}
+                    date_incarcate = {k.lower(): (v if isinstance(v, list) else [v]) for k, v in date.get("date_memorie", {}).items()}
+                    self.memorie.update(date_incarcate) # Adaugă ce a învățat peste baza de date
                     self.tokens = date.get("tokens", 0)
-            except: self.memorie = {}
+            except: pass
 
     def salveaza(self):
         try:
             with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
                 json.dump({"date_memorie": self.memorie, "tokens": self.tokens}, f, ensure_ascii=False, indent=4)
             
-            # --- FUNCȚIA DE SALVARE PE GITHUB (AUTO-COMMIT) ---
-            # Această parte trimite fișierul înapoi în repository-ul tău
+            # AUTO-SAVE PE GITHUB (Dacă ai dat permisiunile de Write în Settings)
             if os.getenv("GITHUB_ACTIONS"):
                 subprocess.run(["git", "config", "user.name", "ZibiBot-AutoSave"])
                 subprocess.run(["git", "config", "user.email", "bot@zibi.com"])
                 subprocess.run(["git", "add", FISIER_MEMORIE])
                 subprocess.run(["git", "commit", "-m", "Zibi a învățat ceva nou! ✨"])
                 subprocess.run(["git", "push"])
-        except Exception as e:
-            print(f"Eroare la salvare: {e}")
+        except: pass
 
 zibi = ZibiBrain()
 
 def alege_unic(lista_optiuni):
-    if not lista_optiuni: return "🤔..."
     disponibile = [opt for opt in lista_optiuni if opt not in istoric_raspunsuri]
     ales = random.choice(disponibile if disponibile else lista_optiuni)
     istoric_raspunsuri.append(ales)
     return ales
 
-# --- LOGICA DE PROCESARE ---
 def proceseaza_mesaj(text_raw, uid):
-    text_curat = text_raw.strip()
-    linii = text_curat.split('\n')
-    text_mic = text_curat.lower()
-
-    # 1. ADMIN: ÎNVĂȚARE / ȘTERGERE
+    text_mic = text_raw.strip().lower()
+    
+    # 1. ÎNVĂȚARE / ȘTERGERE (Doar tu)
     if text_mic.startswith("/invata") and uid == ID_STAPAN:
+        linii = text_raw.split('\n')
         invatate = 0
         for linie in linii:
             if ":" in linie:
@@ -76,31 +81,23 @@ def proceseaza_mesaj(text_raw, uid):
                     zibi.memorie[intrebare].append(raspuns)
                     zibi.tokens += 10
                     invatate += 1
-        zibi.salveaza() # Aici se declanșează salvarea și push-ul pe GitHub
-        return f"✨ Am învățat {invatate} variante noi! Totul a fost salvat permanent în baza de date. (Tokens: {zibi.tokens})"
+        zibi.salveaza()
+        return f"✨ Am învățat {invatate} lucruri! (Tokens: {zibi.tokens})"
 
-    if text_mic.startswith("/sterge") and uid == ID_STAPAN:
-        cuvant = text_mic.replace("/sterge", "").strip()
-        if cuvant in zibi.memorie:
-            del zibi.memorie[cuvant]
-            zibi.salveaza()
-            return f"🗑️ Am șters '{cuvant}' și am actualizat serverul."
-        return "❓ Nu am găsit categoria."
-
-    # 2. CONVERSAȚIE
+    # 2. CONVERSAȚIE (Pentru toată lumea)
     chei = list(zibi.memorie.keys())
     potrivire = get_close_matches(text_mic, chei, n=1, cutoff=0.5)
+    
     if potrivire:
         return alege_unic(zibi.memorie[potrivire[0]])
     
-    return "🤔 Nu știu ce să zic la asta. Învață-mă ceva nou!"
+    return "🤔 Nu știu ce să zic la asta. Învață-mă: /invata intrebare : raspuns"
 
-# --- TG HANDLER ---
 @bot.message_handler(func=lambda m: True)
 def tg_msg(message):
     raspuns = proceseaza_mesaj(message.text, message.from_user.id)
     bot.reply_to(message, raspuns)
 
 if __name__ == "__main__":
-    print("Zibi este online cu sistem de salvare permanentă!")
+    print("Zibi e online!")
     bot.polling(none_stop=True)
