@@ -3,28 +3,30 @@ import json
 import os
 import random
 import io
+import requests
+from bs4 import BeautifulSoup
+from duckduckgo_search import DDGS
 from rembg import remove
 from PIL import Image
-import fitz  # PyMuPDF
-from duckduckgo_search import DDGS
 
-# --- CONFIGURARE DATE ACCES ---
+# --- CONFIGURARE ---
 TOKEN = "8276199135:AAGTcsdHJdncH_UZsv5PzSHFDGCzkOGibt8"
 ID_STAPAN = 7040347167 
+FISIER_MEMORIE = "zibi_memorie.json"
+apiKey = "" # Rezervat pentru procesare AI daca este disponibila
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
-FISIER_MEMORIE = "zibi_memorie.json"
 
 class ZibiBrain:
     def __init__(self):
         self.default_mem = {
-            "salut": ["Salut! Sunt Zibi, asistentul tău creat de Brut Studio. 🌟"],
+            "salut": ["Salut! Sunt Zibi, asistentul tău de încredere. 🌟"],
             "cine te-a creat": ["Creatorul meu este Brut Studio! 🚀"]
         }
         self.memorie = self.default_mem.copy()
-        self.incarca_memorie()
+        self.incarca()
 
-    def incarca_memorie(self):
+    def incarca(self):
         if os.path.exists(FISIER_MEMORIE):
             try:
                 with open(FISIER_MEMORIE, "r", encoding="utf-8") as f:
@@ -33,7 +35,7 @@ class ZibiBrain:
                         self.memorie.update(date["date_memorie"])
             except: pass
 
-    def salveaza_memorie(self):
+    def salveaza(self):
         try:
             with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
                 json.dump({"date_memorie": self.memorie}, f, ensure_ascii=False, indent=4)
@@ -41,62 +43,72 @@ class ZibiBrain:
 
 zibi = ZibiBrain()
 
-def executa_cautare_web(query):
-    """Căutare pe internet cu filtrare pentru subiect."""
+def extrage_informatie_wikipedia(query):
+    """Cauta pe Wikipedia si extrage primul paragraf relevant."""
     try:
-        # Curățăm textul de cuvinte de comandă
-        q_clean = query.lower()
-        for v in ["caută pe internet", "cauta pe internet", "caută", "cauta", "/cauta"]:
-            q_clean = q_clean.replace(v, "")
-        
-        q_clean = q_clean.strip()
-        if not q_clean: return None
-
+        # Pasul 1: Gasim link-ul de Wikipedia folosind DuckDuckGo (foarte rapid)
+        search_query = f"{query} wikipedia romana"
         with DDGS() as ddgs:
-            # Căutăm informația
-            results = list(ddgs.text(f"{q_clean} wikipedia", region='wt-wt', max_results=2))
-            if results:
-                raspuns = f"🌐 *Zibi a găsit pe internet:* \n\n"
-                for r in results:
-                    raspuns += f"✅ *{r['title']}*\n{r['body'][:250]}...\n🔗 [Vezi Sursa]({r['href']})\n\n"
-                return raspuns
-    except: pass
+            results = list(ddgs.text(search_query, region='wt-wt', max_results=3))
+            
+            url_wikipedia = None
+            for r in results:
+                if "wikipedia.org" in r['href']:
+                    url_wikipedia = r['href']
+                    break
+            
+            if not url_wikipedia and results:
+                url_wikipedia = results[0]['href'] # Daca nu e wiki, luam prima sursa sigura
+
+            if url_wikipedia:
+                # Pasul 2: Descarcam pagina si extragem textul
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                res = requests.get(url_wikipedia, headers=headers, timeout=5)
+                res.encoding = 'utf-8'
+                soup = BeautifulSoup(res.text, 'html.parser')
+                
+                # Curatam codul inutil
+                for s in soup(['script', 'style', 'table', 'aside']):
+                    s.decompose()
+
+                # Cautam paragrafele de text (Wikipedia are textul principal in <p>)
+                paragrafe = soup.find_all('p')
+                text_final = ""
+                count = 0
+                for p in paragrafe:
+                    txt = p.get_text().strip()
+                    if len(txt) > 50: # Ignoram fragmentele prea scurte
+                        text_final += txt + "\n\n"
+                        count += 1
+                    if count >= 2: # Luam primele 2 paragrafe pentru un raspuns clar
+                        break
+                
+                if text_final:
+                    return f"📖 *Informație găsită:*\n\n{text_final}\n📍 _Sursa: {url_wikipedia}_"
+    except Exception as e:
+        print(f"Eroare extragere: {e}")
     return None
 
-@bot.message_handler(content_types=['text', 'photo', 'document'])
+@bot.message_handler(content_types=['text', 'photo'])
 def handle_messages(message):
     uid = message.from_user.id
     este_stapan = (uid == ID_STAPAN)
     text_raw = message.text or message.caption or ""
     text_mic = text_raw.lower().strip()
 
-    # 1. INVATARE (Doar Stăpân, obligatoriu cu /)
+    # 1. INVATARE (Doar Stăpân, cu /)
     if este_stapan and text_mic.startswith("/invata"):
         partea = text_raw[len("/invata"):].strip()
         if ":" in partea:
             q, r = [x.strip() for x in partea.split(":", 1)]
-            q_low = q.lower()
-            if q_low not in zibi.memorie: zibi.memorie[q_low] = []
-            zibi.memorie[q_low].append(r)
-            zibi.salveaza_memorie()
-            bot.reply_to(message, f"✅ Am memorat lecția: {q}")
-        else:
-            bot.reply_to(message, "⚠️ Folosește formatul: `/invata întrebare : răspuns`", parse_mode="Markdown")
+            zibi.memorie[q.lower()] = [r]
+            zibi.salveaza()
+            bot.reply_to(message, f"✅ Memorat cu succes!")
         return
 
-    # 2. CAUTARE (Fără /)
-    if text_mic.startswith("caută") or text_mic.startswith("cauta"):
-        bot.send_chat_action(message.chat.id, 'typing')
-        rezultat = executa_cautare_web(text_raw)
-        if rezultat:
-            bot.reply_to(message, rezultat, parse_mode="Markdown")
-        elif este_stapan:
-            bot.reply_to(message, "🤔 Nu am găsit nimic pe net. Învață-mă tu!")
-        return
-
-    # 3. IMAGINI (Rembg)
+    # 2. IMAGINI (Rembg)
     if message.content_type == 'photo':
-        bot.send_message(message.chat.id, "🖼️ Elimin fundalul...")
+        bot.send_message(message.chat.id, "🖼️ Prelucrez imaginea, te rog așteaptă...")
         file_info = bot.get_file(message.photo[-1].file_id)
         data = bot.download_file(file_info.file_path)
         try:
@@ -105,19 +117,27 @@ def handle_messages(message):
         except: pass
         return
 
-    # 4. LOGICĂ FINALĂ (Memorie -> Auto-Search -> Tăcere)
+    # 3. LOGICA DE RASPUNS
+    # Cautam intai in memoria locala (JSON)
     if text_mic in zibi.memorie:
         bot.reply_to(message, random.choice(zibi.memorie[text_mic]))
     else:
-        # Dacă nu știe din memorie, încearcă automat pe net
+        # Daca nu e in memorie, Zibi cauta pe Wikipedia
         bot.send_chat_action(message.chat.id, 'typing')
-        rezultat_auto = executa_cautare_web(text_raw)
-        if rezultat_auto:
-            bot.reply_to(message, rezultat_auto, parse_mode="Markdown")
+        
+        # Curatam comanda "cauta" daca exista
+        query = text_raw.lower().replace("cauta", "").replace("caută", "").strip()
+        if not query: query = text_raw
+        
+        informatie = extrage_informatie_wikipedia(query)
+        
+        if informatie:
+            bot.reply_to(message, informatie, parse_mode="Markdown")
         else:
-            # Doar stăpânul vede eroarea dacă și netul eșuează
+            # Daca e stapanul, ii dam optiunea de invatare
             if este_stapan:
-                bot.reply_to(message, "🤔 Nu știu acest subiect. Învață-mă: `/invata întrebare : răspuns`", parse_mode="Markdown")
+                bot.reply_to(message, "❌ Nu am găsit informația pe Wikipedia. Învață-mă: `/invata întrebare : răspuns`", parse_mode="Markdown")
 
 if __name__ == "__main__":
+    print("🚀 Zibi - Expertul Wikipedia este Online!")
     bot.polling(none_stop=True)
