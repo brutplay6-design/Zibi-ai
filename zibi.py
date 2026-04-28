@@ -3,12 +3,10 @@ import json
 import os
 import random
 import io
-import subprocess
 from rembg import remove
 from PIL import Image
 import fitz  # PyMuPDF
 from duckduckgo_search import DDGS
-from collections import deque
 
 # --- CONFIGURARE DATE ACCES ---
 TOKEN = "8276199135:AAGTcsdHJdncH_UZsv5PzSHFDGCzkOGibt8"
@@ -43,30 +41,26 @@ class ZibiBrain:
 
 zibi = ZibiBrain()
 
-def cauta_pe_internet(query):
-    """Căutare inteligentă pe surse sigure."""
+def executa_cautare_web(query):
+    """Căutare pe internet cu filtrare pentru subiect."""
     try:
-        # Curățăm interogația de prefixe
-        text_pt_cautare = query.lower()
-        prefixe = ["caută pe internet", "cauta pe internet", "caută pe interne", "caută", "cauta"]
-        for p in prefixe:
-            if text_pt_cautare.startswith(p):
-                text_pt_cautare = text_pt_cautare[len(p):].strip()
-                break
+        # Curățăm textul de cuvinte de comandă
+        q_clean = query.lower()
+        for v in ["caută pe internet", "cauta pe internet", "caută", "cauta", "/cauta"]:
+            q_clean = q_clean.replace(v, "")
         
-        if not text_pt_cautare:
-            text_pt_cautare = query # Fallback la textul original dacă e prea scurt după tăiere
+        q_clean = q_clean.strip()
+        if not q_clean: return None
 
         with DDGS() as ddgs:
-            # Adăugăm Wikipedia pentru a asigura surse sigure conform cerinței
-            results = list(ddgs.text(f"{text_pt_cautare} wikipedia", region='wt-wt', max_results=3))
+            # Căutăm informația
+            results = list(ddgs.text(f"{q_clean} wikipedia", region='wt-wt', max_results=2))
             if results:
-                raspuns = f"🔎 *Informații găsite de Zibi pentru:* '{text_pt_cautare}'\n\n"
+                raspuns = f"🌐 *Zibi a găsit pe internet:* \n\n"
                 for r in results:
-                    raspuns += f"✅ *{r['title']}*\n{r['body'][:200]}...\n🔗 [Sursă]({r['href']})\n\n"
+                    raspuns += f"✅ *{r['title']}*\n{r['body'][:250]}...\n🔗 [Vezi Sursa]({r['href']})\n\n"
                 return raspuns
-    except Exception as e:
-        print(f"Eroare search: {e}")
+    except: pass
     return None
 
 @bot.message_handler(content_types=['text', 'photo', 'document'])
@@ -76,34 +70,31 @@ def handle_messages(message):
     text_raw = message.text or message.caption or ""
     text_mic = text_raw.lower().strip()
 
-    # --- 1. INVATARE: CU SLASH (Doar Stăpân) ---
+    # 1. INVATARE (Doar Stăpân, obligatoriu cu /)
     if este_stapan and text_mic.startswith("/invata"):
-        try:
-            partea = text_raw[len("/invata"):].strip()
-            if ":" in partea:
-                q, r = [x.strip() for x in partea.split(":", 1)]
-                q_low = q.lower()
-                if q_low not in zibi.memorie: zibi.memorie[q_low] = []
-                zibi.memorie[q_low].append(r)
-                zibi.salveaza_memorie()
-                bot.reply_to(message, f"✅ Brut Studio, am memorat: {q}")
-            else:
-                bot.reply_to(message, "⚠️ Format corect: `/invata întrebare : răspuns`", parse_mode="Markdown")
-        except: pass
+        partea = text_raw[len("/invata"):].strip()
+        if ":" in partea:
+            q, r = [x.strip() for x in partea.split(":", 1)]
+            q_low = q.lower()
+            if q_low not in zibi.memorie: zibi.memorie[q_low] = []
+            zibi.memorie[q_low].append(r)
+            zibi.salveaza_memorie()
+            bot.reply_to(message, f"✅ Am memorat lecția: {q}")
+        else:
+            bot.reply_to(message, "⚠️ Folosește formatul: `/invata întrebare : răspuns`", parse_mode="Markdown")
         return
 
-    # --- 2. CAUTARE: FĂRĂ SLASH (Detectare cuvânt cheie) ---
+    # 2. CAUTARE (Fără /)
     if text_mic.startswith("caută") or text_mic.startswith("cauta"):
         bot.send_chat_action(message.chat.id, 'typing')
-        rezultat = cauta_pe_internet(text_raw)
+        rezultat = executa_cautare_web(text_raw)
         if rezultat:
             bot.reply_to(message, rezultat, parse_mode="Markdown")
-        else:
-            if este_stapan:
-                bot.reply_to(message, "🤔 Nu am găsit nimic pe internet. Învață-mă: `/invata întrebare : răspuns`", parse_mode="Markdown")
+        elif este_stapan:
+            bot.reply_to(message, "🤔 Nu am găsit nimic pe net. Învață-mă tu!")
         return
 
-    # --- 3. PROCESARE IMAGINI (Rembg) ---
+    # 3. IMAGINI (Rembg)
     if message.content_type == 'photo':
         bot.send_message(message.chat.id, "🖼️ Elimin fundalul...")
         file_info = bot.get_file(message.photo[-1].file_id)
@@ -114,20 +105,19 @@ def handle_messages(message):
         except: pass
         return
 
-    # --- 4. RĂSPUNS DIN MEMORIE SAU AUTO-SEARCH ---
+    # 4. LOGICĂ FINALĂ (Memorie -> Auto-Search -> Tăcere)
     if text_mic in zibi.memorie:
         bot.reply_to(message, random.choice(zibi.memorie[text_mic]))
     else:
-        # Dacă nu e în memorie, încearcă automat pe internet
+        # Dacă nu știe din memorie, încearcă automat pe net
         bot.send_chat_action(message.chat.id, 'typing')
-        rezultat_auto = cauta_pe_internet(text_raw)
+        rezultat_auto = executa_cautare_web(text_raw)
         if rezultat_auto:
             bot.reply_to(message, rezultat_auto, parse_mode="Markdown")
         else:
-            # Mesajul de "Nu știu" apare DOAR pentru tine (stăpânul)
+            # Doar stăpânul vede eroarea dacă și netul eșuează
             if este_stapan:
-                bot.reply_to(message, "🤔 Nu am găsit informații în memorie sau pe net. Învață-mă: `/invata întrebare : răspuns`", parse_mode="Markdown")
+                bot.reply_to(message, "🤔 Nu știu acest subiect. Învață-mă: `/invata întrebare : răspuns`", parse_mode="Markdown")
 
 if __name__ == "__main__":
-    print("🚀 Zibi Pro este ONLINE și configurat corect!")
     bot.polling(none_stop=True)
