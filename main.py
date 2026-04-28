@@ -1,120 +1,133 @@
-import logging
+Import telebot
 import json
 import os
-import asyncio
-from io import BytesIO
-from telegram import Update, BotCommand
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
+import random
+import threading
+from collections import deque
+from difflib import get_close_matches
 
-# Încercăm să importăm bibliotecile de viziune (vor funcționa doar pe server)
-try:
-    from PIL import Image
-    from rembg import remove
-    import requests
-    VISION_ENABLED = True
-except ImportError:
-    # Dacă rulăm local și nu sunt instalate, botul va funcționa doar pe text
-    VISION_ENABLED = False
-    print("⚠️ Bibliotecile de viziune nu sunt instalate. Analiza de imagini este dezactivată local.")
-
-# --- CONFIGURARE ---
+# --- DATE ACCES ---
 TOKEN = "8276199135:AAGTcsdHJdncH_UZsv5PzSHFDGCzkOGibt8"
-MEMORY_FILE = "zibi_memory.json"
-USER_ID_ADMIN = 7040347167  # ID-ul tău securizat
+ID_STAPAN = 7040347167 
 
-logging.basicConfig(level=logging.WARNING)
+bot = telebot.TeleBot(TOKEN, threaded=False)
+FISIER_MEMORIE = "zibi_memorie.json"
 
-# Memorie
-def load_memory():
-    if os.path.exists(MEMORY_FILE):
-        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-            try: return json.load(f)
-            except: return []
-    return []
+# --- EVITARE REPETARE ---
+istoric_raspunsuri = deque(maxlen=10)
 
-zibi_knowledge = load_memory()
-# Setări sesiuni de analiză (vizuale)
-sesiuni_setate = {"sesiuni": 5, "repetari": 3}
+# --- DATE DEFAULT (Dacă memoria e goală) ---
+SALUTURI = [
+    "Salutare! Sper că ai o zi grozavă! 🌟",
+    "Opa, a venit șeful! Ne punem pe treabă? 😎",
+    "Salut! Sper că ai adus pizza! 🍕",
+    "Cucu-bau! Sunt aici, viu și nevătămat! 🙈"
+]
 
-# --- SECURITATE ---
-def is_admin(update: Update):
-    return update.effective_user.id == USER_ID_ADMIN
+GLUME = [
+    "De ce nu merg elefanții la plajă? Pentru că le pică mereu chiloții! 🐘",
+    "Cum se numește o oaie fără picioare? Un norișor pe pământ! ☁️",
+    "Ce face o vacă pe lună? Muuu-nwalk! 🐄",
+    "Cum se numește un câine care face magie? Un Labra-cadabra! 🪄",
+    "De ce are rinocerul corn? Ca să nu pară doar un hipopotam supărat! 🦏"
+]
 
-# --- ANALIZĂ VIZUALĂ (DOAR PE SERVER) ---
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Analizează imaginea, elimină fundalul și identifică subiectul"""
-    if not VISION_ENABLED:
-        await update.message.reply_text("🚫 Funcția de viziune este dezactivată local din cauza lipsei bibliotecilor. Te rog pune botul pe un server.")
-        return
+class ZibiBrain:
+    def __init__(self):
+        self.memorie = {}
+        self.tokens = 0
+        self.incarca()
 
-    # Sesiune de Analiză (Repetiții vizuale pe care le-ai cerut)
-    total_steps = sesiuni_setate["sesiuni"] * sesiuni_setate["repetari"]
-    status_msg = await update.message.reply_text(f"📸 Imagine primită! Pornesc sesiunile de antrenament vizual ({total_steps} iterații neuronale)...")
+    def incarca(self):
+        if os.path.exists(FISIER_MEMORIE):
+            try:
+                with open(FISIER_MEMORIE, "r", encoding="utf-8") as f:
+                    date = json.load(f)
+                    self.memorie = {k.lower(): (v if isinstance(v, list) else [v]) for k, v in date.get("date_memorie", {}).items()}
+                    self.tokens = date.get("tokens", 0)
+            except: self.memorie = {}
 
-    # Simulăm "gândirea neuronală" în trepte
-    for i in range(1, sesiuni_setate["sesiuni"] + 1):
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        for r in range(1, sesiuni_setate["repetari"] + 1):
-            await status_msg.edit_text(f"🔍 Scanare neuronală...\nSesiunea: {i}/{sesiuni_setate['sesiuni']}\nRepetarea: {r}/{sesiuni_setate['repetari']}")
-            await asyncio.sleep(0.5)
+    def salveaza(self):
+        try:
+            with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
+                json.dump({"date_memorie": self.memorie, "tokens": self.tokens}, f, ensure_ascii=False, indent=4)
+        except: pass
 
-    # Descărcăm imaginea
-    file = await update.message.photo[-1].get_file()
-    file_bytes = await file.download_as_bytearray()
-    input_image = Image.open(BytesIO(file_bytes))
+zibi = ZibiBrain()
 
-    try:
-        # Analiză profundă: Eliminarea fundalului pentru a identifica obiectul central
-        # Asta ajută botul să nu confunde fundalul cu pisica sau cana
-        output_image_bytes = remove(file_bytes)
-        output_image = Image.open(BytesIO(output_image_bytes))
-        
-        # Aici s-ar integra un model complex precum MobileNet sau ResNet
-        # Pentru simplitate, folosim logica de bază:
-        output_path = "zibi_vision_analysis.png"
-        output_image.save(output_path)
-        
-        # Trimitem imaginea analizată (fără fundal) înapoi pentru a confirma ce am 'văzut'
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=open(output_path, 'rb'), caption="✅ Analiză vizuală completă!\n\nSubiectul principal a fost extras și analizat în 15 iterații.\n\nSunt 92% sigur că este: [Pisică]")
-        
-        os.remove(output_path) # Curățăm fișierul temporar
+def alege_unic(lista_optiuni):
+    if not lista_optiuni: return "🤔..."
+    disponibile = [opt for opt in lista_optiuni if opt not in istoric_raspunsuri]
+    ales = random.choice(disponibile if disponibile else lista_optiuni)
+    istoric_raspunsuri.append(ales)
+    return ales
 
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Eroare la analiza vizuală profundă: {str(e)}")
+# --- LOGICA DE PROCESARE ---
+def proceseaza_mesaj(text_raw, uid):
+    text_curat = text_raw.strip()
+    linii = text_curat.split('\n')
+    text_mic = text_curat.lower()
 
-# --- ÎNVĂȚARE DIN JSON (REPARAT) ---
-async def invata_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global zibi_knowledge
-    if not is_admin(update): return
-    file = await update.message.document.get_file()
-    file_path = "temp_brain.json"
-    await file.download_to_drive(file_path)
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            new_data = json.load(f)
-            # Acceptăm direct formatul listă din antrenamet.json
-            if isinstance(new_data, list):
-                zibi_knowledge = new_data
-                with open(MEMORY_FILE, "w", encoding="utf-8") as f_save:
-                    json.dump(zibi_knowledge, f_save, ensure_ascii=False)
-                await update.message.reply_text(f"🧠 Antrenament reușit! Am asimilat {len(zibi_knowledge)} cunoștințe noi.")
-    except: await update.message.reply_text("❌ JSON invalid.")
+    # 1. ADMIN: ÎNVĂȚARE / ȘTERGERE
+    if text_mic.startswith("/invata") and uid == ID_STAPAN:
+        invatate = 0
+        for linie in linii:
+            if ":" in linie:
+                piese = linie.split(":", 1)
+                intrebare = piese[0].lower().replace("/invata", "").strip()
+                raspuns = piese[1].strip()
+                if intrebare not in zibi.memorie: zibi.memorie[intrebare] = []
+                if raspuns not in zibi.memorie[intrebare]:
+                    zibi.memorie[intrebare].append(raspuns)
+                    zibi.tokens += 10
+                    invatate += 1
+        zibi.salveaza()
+        return f"✨ Am învățat {invatate} variante noi! (Total Tokens: {zibi.tokens})"
 
-async def raspunde(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    for item in zibi_knowledge:
-        if item.get("input").lower() in text:
-            await update.message.reply_text(item.get("output"))
-            return
-    if "zibi" in text: await update.message.reply_text("Sunt online și securizat doar pentru tine!")
+    if text_mic.startswith("/sterge") and uid == ID_STAPAN:
+        cuvant = text_mic.replace("/sterge", "").strip()
+        if cuvant in zibi.memorie:
+            del zibi.memorie[cuvant]
+            zibi.salveaza()
+            return f"🗑️ Am șters '{cuvant}' din memorie."
+        return "❓ Nu am găsit categoria."
 
-# --- LANSARE ---
-if __name__ == '__main__':
-    app = ApplicationBuilder().token(TOKEN).build()
+    # 2. CONVERSAȚIE (Pentru toți)
+    if any(x in text_mic for x in ["salut", "buna", "hei"]):
+        return alege_unic(SALUTURI)
+    if any(x in text_mic for x in ["gluma", "zi o gluma"]):
+        return alege_unic(GLUME)
     
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.Document.ALL, invata_json))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), raspunde))
+    # Căutare în memorie
+    chei = list(zibi.memorie.keys())
+    potrivire = get_close_matches(text_mic, chei, n=1, cutoff=0.5)
+    if potrivire:
+        return alege_unic(zibi.memorie[potrivire[0]])
     
-    print("Zibi AI cu Viziune Neuronală este GATA pentru Server!")
-    app.run_polling()
+    return "🤔 Interesant! Mai spune-mi."
+
+# --- TERMINAL THREAD ---
+def terminal_thread():
+    print(f"=== ZIBI MASTER ACTIVE (Tokens: {zibi.tokens}) ===")
+    while True:
+        try:
+            u_input = input("Tu > ")
+            if u_input:
+                print(f"Zibi > {proceseaza_mesaj(u_input, ID_STAPAN)}")
+        except EOFError: break
+
+# --- TG HANDLER ---
+@bot.message_handler(func=lambda m: True)
+def tg_msg(message):
+    # Comanda specială 'sterge' pentru curățat chat-ul
+    if message.text.lower() == "sterge":
+        try: bot.delete_message(message.chat.id, message.message_id)
+        except: pass
+        
+    raspuns = proceseaza_mesaj(message.text, message.from_user.id)
+    bot.reply_to(message, raspuns)
+
+if __name__ == "__main__":
+    threading.Thread(target=terminal_thread, daemon=True).start()
+    print("Botul este Online pe Telegram!")
+    bot.polling(none_stop=True)
