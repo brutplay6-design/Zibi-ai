@@ -11,30 +11,107 @@ from duckduckgo_search import DDGS
 from collections import deque
 
 # --- CONFIGURARE DATE ACCES ---
-# Inlocuieste cu token-ul tau real
 TOKEN = "8276199135:AAGTcsdHJdncH_UZsv5PzSHFDGCzkOGibt8"
 ID_STAPAN = 7040347167 
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 FISIER_MEMORIE = "zibi_memorie.json"
-istoric_raspunsuri = deque(maxlen=10)
 
 class ZibiBrain:
     def __init__(self):
-        # Structura de baza pe care Zibi nu o uita niciodata
         self.default_mem = {
-            "salut": ["Salut! Sunt Zibi, asistentul tau creat de Brut Studio. 🌟"],
-            "cine te-a creat": ["Creatorul meu este Brut Studio! 🚀"],
-            "ce faci": ["Sunt online si gata sa te ajut cu orice! 🤖"]
+            "salut": ["Salut! Sunt Zibi, asistentul tău creat de Brut Studio. 🌟"],
+            "cine te-a creat": ["Creatorul meu este Brut Studio! 🚀"]
         }
         self.memorie = self.default_mem.copy()
         self.incarca_memorie()
 
     def incarca_memorie(self):
-        """Incarca datele din zibi_memorie.json fara sa le stearga pe cele existente."""
         if os.path.exists(FISIER_MEMORIE):
             try:
                 with open(FISIER_MEMORIE, "r", encoding="utf-8") as f:
+                    date = json.load(f)
+                    if "date_memorie" in date:
+                        self.memorie.update(date["date_memorie"])
+            except: pass
+
+    def salveaza_memorie(self):
+        try:
+            with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
+                json.dump({"date_memorie": self.memorie}, f, ensure_ascii=False, indent=4)
+        except: pass
+
+zibi = ZibiBrain()
+
+def cauta_surse_sigure(query):
+    """Căutare pe internet folosind DuckDuckGo."""
+    try:
+        search_query = f"{query} wikipedia"
+        with DDGS() as ddgs:
+            results = list(ddgs.text(search_query, region='wt-wt', max_results=3))
+            if results:
+                raspuns = f"🔎 *Informații găsite pentru:* '{query}'\n\n"
+                for r in results:
+                    raspuns += f"✅ *{r['title']}*\n📝 {r['body'][:200]}...\n🔗 [Sursă]({r['href']})\n\n"
+                return raspuns
+    except: pass
+    return "🤔 Nu am găsit detalii sigure pe internet pentru acest subiect."
+
+@bot.message_handler(content_types=['text', 'photo', 'document'])
+def handle_messages(message):
+    uid = message.from_user.id
+    text_raw = message.text or message.caption or ""
+    text_mic = text_raw.lower().strip()
+
+    # --- INVATARE: CU SLASH (obligatoriu) ---
+    # Exemplu: /invata cine e seful : Brut Studio
+    if uid == ID_STAPAN and text_mic.startswith("/invata"):
+        try:
+            partea = text_raw[len("/invata"):].strip()
+            if ":" in partea:
+                q, r = [x.strip() for x in partea.split(":", 1)]
+                q_low = q.lower()
+                if q_low not in zibi.memorie: zibi.memorie[q_low] = []
+                zibi.memorie[q_low].append(r)
+                zibi.salveaza_memorie()
+                bot.reply_to(message, f"✅ Am memorat: {q}")
+                return
+            else:
+                bot.reply_to(message, "⚠️ Folosește formatul: /invata întrebare : răspuns")
+                return
+        except: pass
+
+    # --- CAUTARE: FĂRĂ SLASH ---
+    # Exemplu: cauta vremea in bucuresti
+    if text_mic.startswith("cauta"):
+        subiect = text_raw[len("cauta"):].strip()
+        if subiect:
+            bot.send_chat_action(message.chat.id, 'typing')
+            bot.reply_to(message, cauta_surse_sigure(subiect), parse_mode="Markdown")
+            return
+
+    # --- PROCESARE IMAGINI ---
+    if message.content_type == 'photo':
+        bot.send_message(message.chat.id, "🖼️ Elimin fundalul...")
+        file_info = bot.get_file(message.photo[-1].file_id)
+        data = bot.download_file(file_info.file_path)
+        try:
+            output = remove(data)
+            bot.send_document(message.chat.id, io.BytesIO(output), visible_file_name="zibi_fara_fundal.png")
+        except: pass
+        return
+
+    # --- RĂSPUNS MEMORIE SAU AUTO-SEARCH ---
+    if text_mic in zibi.memorie:
+        bot.reply_to(message, random.choice(zibi.memorie[text_mic]))
+    else:
+        # Dacă nu știe, caută automat
+        bot.send_chat_action(message.chat.id, 'typing')
+        bot.reply_to(message, cauta_surse_sigure(text_raw), parse_mode="Markdown")
+
+if __name__ == "__main__":
+    print("🚀 Zibi Pro este online (/invata + cauta fara slash)")
+    bot.polling(none_stop=True)                with open(FISIER_MEMORIE, "r", encoding="utf-8") as f:
                     date_incarcate = json.load(f)
                     if "date_memorie" in date_incarcate:
                         # Combinam memoria default cu cea salvata
