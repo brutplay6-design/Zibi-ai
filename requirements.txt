@@ -1,7 +1,5 @@
 pyTelegramBotAPI
-Pillow
-rembg
 requests
+rembg
 onnxruntime
-pymupdf
-duckduckgo-search
+Pillow
