@@ -4,6 +4,8 @@ import os
 import random
 import requests
 import time
+import io
+from rembg import remove
 
 # --- CONFIGURARE ---
 TOKEN = "8276199135:AAGTcsdHJdncH_UZsv5PzSHFDGCzkOGibt8"
@@ -16,8 +18,6 @@ class CreierEvolutiv:
     def __init__(self):
         self.cale = FISIER_NEURONI
         self.model = self.incarca()
-        # Alfabetul complet pe care Zibi il poate folosi
-        self.caractere_permise = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?  🤖🌟🚀✅"
 
     def incarca(self):
         if os.path.exists(self.cale):
@@ -33,8 +33,75 @@ class CreierEvolutiv:
                 json.dump(self.model, f, ensure_ascii=False, indent=2)
         except: pass
 
-    def antreneaza_pe_text(self, text):
-        """Invata combinatiile de caractere din textul primit."""
+    def antreneaza(self, text):
+        ordin = 3
+        if not text or len(text) <= ordin: return
+        for i in range(len(text) - ordin):
+            gram = text[i:i+ordin]
+            urmatorul = text[i+ordin]
+            if gram not in self.model: self.model[gram] = {}
+            self.model[gram][urmatorul] = self.model[gram].get(urmatorul, 0) + 1
+
+    def genereaza(self, inceput, lungime=70):
+        if not self.model: return "🤖 Neuronii sunt încă goi. Folosește /epoca [număr]"
+        gram = inceput[:3] if inceput[:3] in self.model else random.choice(list(self.model.keys()))
+        rezultat = gram
+        for _ in range(lungime):
+            if gram in self.model:
+                optiuni = self.model[gram]
+                urm = random.choices(list(optiuni.keys()), weights=list(optiuni.values()))[0]
+                rezultat += urm
+                gram = rezultat[-3:]
+                if urm in ".!?": break
+            else: break
+        return rezultat
+
+zibi_ai = CreierEvolutiv()
+
+def preia_date_antrenament():
+    teme = ["Viitor", "Tehnologie", "Moldova", "Univers", "Cod", "Robot", "Iarna"]
+    try:
+        url = "https://ro.wikipedia.org/w/api.php"
+        p = {"action": "query", "prop": "extracts", "exintro": True, "explaintext": True, "titles": random.choice(teme), "format": "json"}
+        res = requests.get(url, params=p).json()
+        pagini = res['query']['pages']
+        for id in pagini: return pagini[id].get('extract', "")
+    except: return ""
+
+@bot.message_handler(commands=['epoca'])
+def epoca(message):
+    if message.from_user.id != ID_STAPAN: return
+    try:
+        n = int(message.text.split()[1])
+        msg = bot.reply_to(message, f"🧬 Antrenament pornit: {n} epoci...")
+        for e in range(n):
+            date = preia_date_antrenament()
+            zibi_ai.antreneaza(date)
+            if e % 2 == 0:
+                bot.edit_message_text(f"🧠 Învăț... Epoca {e+1}/{n}", message.chat.id, msg.message_id)
+        zibi_ai.salveaza()
+        bot.edit_message_text(f"✅ Gata! Zibi are acum {len(zibi_ai.model)} conexiuni.", message.chat.id, msg.message_id)
+    except: bot.reply_to(message, "Folosește: /epoca 10")
+
+@bot.message_handler(content_types=['text', 'photo'])
+def handle(message):
+    if message.content_type == 'photo':
+        bot.send_chat_action(message.chat.id, 'upload_photo')
+        f_info = bot.get_file(message.photo[-1].file_id)
+        img = bot.download_file(f_info.file_path)
+        try:
+            res = remove(img)
+            bot.send_document(message.chat.id, io.BytesIO(res), visible_file_name="zibi_edit.png")
+        except: pass
+        return
+
+    text = message.text
+    zibi_ai.antreneaza(text) # Invatare din mers
+    bot.send_chat_action(message.chat.id, 'typing')
+    bot.reply_to(message, zibi_ai.genereaza(text))
+
+if __name__ == "__main__":
+    bot.polling(none_stop=True)        """Invata combinatiile de caractere din textul primit."""
         ordin = 3
         if len(text) <= ordin: return
         
