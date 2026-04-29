@@ -2,39 +2,123 @@ import telebot
 import json
 import os
 import random
-import io
 import requests
-from rembg import remove
-from PIL import Image
+import time
 
 # --- CONFIGURARE ---
 TOKEN = "8276199135:AAGTcsdHJdncH_UZsv5PzSHFDGCzkOGibt8"
 ID_STAPAN = 7040347167 
-FISIER_MEMORIE = "zibi_memorie.json"
+FISIER_NEURONI = "zibi_neuroni.json"
 
-bot = telebot.TeleBot(TOKEN, threaded=False)
+bot = telebot.TeleBot(TOKEN)
 
-class ZibiBrain:
+class CreierEvolutiv:
     def __init__(self):
-        self.default_mem = {
-            "salut": ["Salut! Sunt Zibi, asistentul tău de încredere. 🌟"],
-            "cine te-a creat": ["Creatorul meu este Brut Studio! 🚀"]
-        }
-        self.memorie = self.default_mem.copy()
-        self.incarca()
+        self.cale = FISIER_NEURONI
+        self.model = self.incarca()
+        # Alfabetul complet pe care Zibi il poate folosi
+        self.caractere_permise = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?  🤖🌟🚀✅"
 
     def incarca(self):
-        if os.path.exists(FISIER_MEMORIE):
+        if os.path.exists(self.cale):
             try:
-                with open(FISIER_MEMORIE, "r", encoding="utf-8") as f:
-                    date = json.load(f)
-                    if "date_memorie" in date:
-                        self.memorie.update(date["date_memorie"])
+                with open(self.cale, "r", encoding="utf-8") as f:
+                    return json.load(f)
             except: pass
+        return {}
 
     def salveaza(self):
         try:
-            with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
+            with open(self.cale, "w", encoding="utf-8") as f:
+                json.dump(self.model, f, ensure_ascii=False, indent=2)
+        except: pass
+
+    def antreneaza_pe_text(self, text):
+        """Invata combinatiile de caractere din textul primit."""
+        ordin = 3
+        if len(text) <= ordin: return
+        
+        for i in range(len(text) - ordin):
+            gram = text[i:i+ordin]
+            urmatorul = text[i+ordin]
+            if gram not in self.model:
+                self.model[gram] = {}
+            if urmatorul not in self.model[gram]:
+                self.model[gram][urmatorul] = 0
+            self.model[gram][urmatorul] += 1
+
+    def genereaza(self, inceput, lungime=60):
+        """Construieste un raspuns litera cu litera."""
+        if not self.model: return "🤖... (Neuroni goi. Folosește /epoca)"
+        
+        # Incepem cu ceva din memorie daca inceputul nu exista
+        gram = inceput[:3] if inceput[:3] in self.model else random.choice(list(self.model.keys()))
+        rezultat = gram
+
+        for _ in range(lungime):
+            if gram in self.model:
+                optiuni = self.model[gram]
+                urmatorul = random.choices(list(optiuni.keys()), weights=list(optiuni.values()))[0]
+                rezultat += urmatorul
+                gram = rezultat[-3:]
+                if urmatorul in ".!?": break # Se opreste la final de propozitie
+            else:
+                break
+        return rezultat
+
+zibi_ai = CreierEvolutiv()
+
+def preia_date_wiki():
+    """Ofera materie prima pentru antrenament."""
+    subiecte = ["Tehnologie", "Moldova", "Robot", "Univers", "Viitor", "Istorie", "Stiinta"]
+    subiect = random.choice(subiecte)
+    try:
+        url = "https://ro.wikipedia.org/w/api.php"
+        params = {"action": "query", "prop": "extracts", "exintro": True, "explaintext": True, "titles": subiect, "format": "json"}
+        res = requests.get(url, params=params).json()
+        pagini = res['query']['pages']
+        for id in pagini:
+            return pagini[id].get('extract', "")
+    except: return None
+
+@bot.message_handler(commands=['epoca'])
+def comanda_epoca(message):
+    if message.from_user.id != ID_STAPAN: return
+    
+    try:
+        # Luam numarul de epoci din textul comenzii (ex: /epoca 5)
+        parti = message.text.split()
+        numar_epoci = int(parti[1]) if len(parti) > 1 else 1
+        
+        status_msg = bot.reply_to(message, f"🧬 Încep antrenamentul autonom pentru {numar_epoci} epoci...")
+        
+        for e in range(numar_epoci):
+            bot.edit_message_text(f"🧠 Epoca {e+1}/{numar_epoci} în curs... Combin litere, cifre și emoji...", message.chat.id, status_msg.message_id)
+            
+            # Pasul de invatare: Zibi "citeste" si proceseaza date noi
+            date_noi = preia_date_wiki()
+            if date_noi:
+                zibi_ai.antreneaza_pe_text(date_noi)
+                time.sleep(1) # Pauza mica sa nu blocheze procesorul
+        
+        zibi_ai.salveaza()
+        bot.edit_message_text(f"✅ Antrenament finalizat! Am acum {len(zibi_ai.model)} conexiuni neuronale.", message.chat.id, status_msg.message_id)
+    except:
+        bot.reply_to(message, "⚠️ Format: `/epoca [număr]` (ex: /epoca 5)", parse_mode="Markdown")
+
+@bot.message_handler(content_types=['text'])
+def handle_text(message):
+    text = message.text
+    # Zibi invata si din ce scrii tu (Feedback Loop)
+    zibi_ai.antreneaza_pe_text(text)
+    
+    bot.send_chat_action(message.chat.id, 'typing')
+    raspuns = zibi_ai.genereaza(text)
+    bot.reply_to(message, raspuns)
+
+if __name__ == "__main__":
+    print("🚀 Zibi este gata pentru antrenament pe epoci!")
+    bot.polling(none_stop=True)            with open(FISIER_MEMORIE, "w", encoding="utf-8") as f:
                 json.dump({"date_memorie": self.memorie}, f, ensure_ascii=False, indent=4)
         except: pass
 
